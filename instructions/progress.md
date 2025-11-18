@@ -43,3 +43,8 @@
 - Filters by orientation and interests are implemented on the feed, with sticky behavior via local storage.
 - "No profiles" empty states are implemented for both general lack of matches and overly tight filters.
 - Daily per-user profile quota and midnight reset are intentionally **not** enforced yet while we are early in the market.
+
+### Milestone 2.3 – Interaction Tracking COMPLETED
+
+- Pass removes the current profile card from the carousel and records the interaction in `users/{uid}/feedInteractions`.
+- Whisper Hi acts as a lightweight "like"; liked interests are aggregated and used to gently bias feed ordering after a few interactions.

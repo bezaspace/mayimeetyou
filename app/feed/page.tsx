@@ -9,7 +9,10 @@ import {
   getDocs,
   limit,
   query,
+  setDoc,
   where,
+  serverTimestamp,
+  increment,
 } from "firebase/firestore";
 import { ref, getDownloadURL } from "firebase/storage";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
@@ -18,6 +21,7 @@ import { useToast } from "@/components/ToastProvider";
 import { Button } from "@/components/ui/button";
 import { db, storage } from "@/lib/firebase";
 import { formatLocationForDisplay } from "@/lib/utils";
+import { FeedInteraction } from "@/lib/types";
 
 interface FeedProfile {
   uid: string;
@@ -97,6 +101,46 @@ function FeedInner() {
   const [interestFilter, setInterestFilter] = useState<string[]>([]);
   const [interestFilterQuery, setInterestFilterQuery] = useState<string>("");
 
+  const handleInteractionUpdate = async (
+    targetProfile: FeedProfile,
+    action: "liked" | "passed"
+  ) => {
+    if (!user) return;
+
+    try {
+      const interactionsCollection = collection(
+        db,
+        "users",
+        user.uid,
+        "feedInteractions"
+      );
+      const interactionRef = doc(interactionsCollection, targetProfile.uid);
+
+      const interestsSnapshot = Array.isArray(targetProfile.interests)
+        ? targetProfile.interests
+        : [];
+
+      const payload: any = {
+        targetUserId: targetProfile.uid,
+        lastAction: action,
+        lastActionAt: serverTimestamp(),
+        interestsSnapshot,
+      };
+
+      if (action === "liked") {
+        payload.likeCount = increment(1);
+      }
+
+      if (action === "passed") {
+        payload.passCount = increment(1);
+      }
+
+      await setDoc(interactionRef, payload, { merge: true });
+    } catch (err) {
+      console.error("Failed to record feed interaction", err);
+    }
+  };
+
   const filteredInterestOptions = useMemo(() => {
     const q = interestFilterQuery.trim().toLowerCase();
     if (!q) return INTEREST_FILTER_OPTIONS;
@@ -152,7 +196,10 @@ function FeedInner() {
       viewerUid: string,
       viewerCity: string,
       viewerCountryCode: string,
-      viewerInterests: string[]
+      viewerInterests: string[],
+      interactionsByTarget: Record<string, FeedInteraction>,
+      likedInterestWeights: Record<string, number>,
+      totalLikes: number
     ) => {
       setFeedLoading(true);
       setFeedError(null);
@@ -197,6 +244,20 @@ function FeedInner() {
           });
         }
 
+        filteredCandidates = filteredCandidates.filter((candidate) => {
+          const interaction = interactionsByTarget[candidate.uid];
+          if (!interaction) return true;
+
+          const passCount =
+            typeof interaction.passCount === "number" ? interaction.passCount : 0;
+
+          if (interaction.lastAction === "passed" && passCount > 0) {
+            return false;
+          }
+
+          return true;
+        });
+
         if (filteredCandidates.length === 0) {
           setFeedProfiles([]);
           if (hasOrientationFilter || hasInterestFilter) {
@@ -206,6 +267,8 @@ function FeedInner() {
           }
           return;
         }
+
+        const hasPersonalizationSignal = totalLikes >= 3;
 
         const scored = filteredCandidates.map((candidate) => {
           const candidateInterests = Array.isArray(candidate.interests)
@@ -226,10 +289,22 @@ function FeedInner() {
               String(candidate.location.countryCode).toLowerCase();
           const randomBoost = Math.random() * 0.5;
 
+          let personalizationBoost = 0;
+
+          if (hasPersonalizationSignal) {
+            for (const interest of candidateInterests) {
+              const weight = likedInterestWeights[interest];
+              if (weight) {
+                personalizationBoost += 0.5 + Math.min(weight, 3) * 0.2;
+              }
+            }
+          }
+
           const score =
             overlap * 2 +
             (sameCity ? 1.5 : 0) +
             (!sameCity && sameCountry ? 0.5 : 0) +
+            personalizationBoost +
             randomBoost;
 
           return { candidate, score };
@@ -317,7 +392,66 @@ function FeedInner() {
           interests,
         });
 
-        await loadFeedProfiles(user.uid, city, countryCode, interests);
+        const interactionsRef = collection(
+          db,
+          "users",
+          user.uid,
+          "feedInteractions"
+        );
+        const interactionsSnap = await getDocs(interactionsRef);
+
+        const interactionsByTarget: Record<string, FeedInteraction> = {};
+        const likedInterestWeights: Record<string, number> = {};
+        let totalLikes = 0;
+
+        interactionsSnap.forEach((interactionDoc) => {
+          const interactionData = interactionDoc.data() as any;
+          const targetUserId =
+            interactionData.targetUserId || interactionDoc.id;
+          const lastAction = interactionData
+            .lastAction as FeedInteraction["lastAction"];
+          const likeCount =
+            typeof interactionData.likeCount === "number"
+              ? interactionData.likeCount
+              : 0;
+          const passCount =
+            typeof interactionData.passCount === "number"
+              ? interactionData.passCount
+              : 0;
+          const interestsSnapshot = Array.isArray(
+            interactionData.interestsSnapshot
+          )
+            ? interactionData.interestsSnapshot
+            : [];
+
+          interactionsByTarget[targetUserId] = {
+            targetUserId,
+            lastAction,
+            lastActionAt: interactionData.lastActionAt,
+            likeCount,
+            passCount,
+            interestsSnapshot,
+          };
+
+          if (lastAction === "liked" && likeCount > 0) {
+            totalLikes += likeCount;
+            interestsSnapshot.forEach((interest: string) => {
+              if (!interest) return;
+              likedInterestWeights[interest] =
+                (likedInterestWeights[interest] || 0) + likeCount;
+            });
+          }
+        });
+
+        await loadFeedProfiles(
+          user.uid,
+          city,
+          countryCode,
+          interests,
+          interactionsByTarget,
+          likedInterestWeights,
+          totalLikes
+        );
       } catch (err) {
         console.error(err);
         setError("Unable to load your profile. Please try again.");
@@ -512,11 +646,13 @@ function FeedInner() {
                           "Whisper recording is coming next. For now this is a preview action.",
                         variant: "success",
                       });
+                      handleInteractionUpdate(profile, "liked");
                     }}
                     onPass={() => {
                       setFeedProfiles((prev) =>
                         prev.filter((item) => item.uid !== profile.uid)
                       );
+                      handleInteractionUpdate(profile, "passed");
                     }}
                   />
                 </div>
