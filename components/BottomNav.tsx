@@ -27,8 +27,8 @@ export function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-background border-t border-border">
-      <div className="flex items-center justify-around h-16">
+    <div className="fixed bottom-0 left-0 right-0 border-t border-border bg-background/95 backdrop-blur">
+      <div className="mx-auto flex h-16 max-w-md items-center justify-around px-2">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           return (
@@ -40,8 +40,10 @@ export function BottomNav() {
                 isActive ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              <item.icon className="w-5 h-5 mb-1" />
-              <span className="text-xs">{item.label}</span>
+              <item.icon className="mb-1 h-5 w-5" />
+              <span className="text-[11px] font-medium tracking-tight">
+                {item.label}
+              </span>
             </Link>
           );
         })}

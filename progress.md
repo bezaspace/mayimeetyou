@@ -9,16 +9,9 @@
 
 ---
 
-## Phase 1 – Authentication & Basic Profile (Epic 1.1) ✅ COMPLETED
+## Phase 1 – Authentication & Basic Profile (Epic 1.1) 🚧 IN PROGRESS
 
 - **Milestone 1.1**: Google Sign-In, session persistence, route protection.
+- **Milestone 1.2 – Basic Profile Setup Flow**: Implemented (profile form, UX, redirects), **tests still pending**.
 
-**Exit criteria met:** Users can sign in with Google, auth state persists across refreshes, and protected routes redirect unauthenticated users.
-
----
-
-## Next: Milestone 1.2 – Basic Profile Setup Flow
-
-- **1.2.1 – Profile creation form (first-time users)**
-- **1.2.2 – UX details**
-- **1.2.3 – Post-setup redirect**
+**Next for Phase 1:** Test Milestone 1.2 (validation, under-18 handling, profile persistence, feed gating).

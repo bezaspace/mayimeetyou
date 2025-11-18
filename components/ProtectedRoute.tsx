@@ -20,8 +20,11 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-6">
-        <p>Loading...</p>
+      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 pb-20">
+        <div className="inline-flex items-center gap-2 rounded-full border bg-card/80 px-4 py-2 text-xs text-muted-foreground shadow-sm">
+          <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+          <span>Getting things ready…</span>
+        </div>
       </div>
     );
   }
