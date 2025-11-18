@@ -6,7 +6,9 @@ import { doc, getDoc, serverTimestamp, setDoc, updateDoc, Timestamp } from "fire
 import { ref, uploadBytes } from "firebase/storage";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/components/AuthProvider";
+import { useToast } from "@/components/ToastProvider";
 import { db, storage } from "@/lib/firebase";
+import { formatLocationForDisplay } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -102,6 +104,9 @@ function ProfileInner() {
   const [dealBreakers, setDealBreakers] = useState<string[]>([]);
   const [openToWhispers, setOpenToWhispers] = useState<boolean>(true);
 
+  const [hideLocation, setHideLocation] = useState<boolean>(false);
+
+  const [existingPhotos, setExistingPhotos] = useState<any[]>([]);
   const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
 
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +114,11 @@ function ProfileInner() {
   const [pendingDraft, setPendingDraft] = useState<DraftProfile | null>(null);
 
   const [interestQuery, setInterestQuery] = useState<string>("");
+
+  const [bioWarning, setBioWarning] = useState<string | null>(null);
+
+  const { showToast } = useToast();
+  const [showPreview, setShowPreview] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -135,6 +145,10 @@ function ProfileInner() {
           setOpenToWhispers(
             typeof data.openToWhispers === "boolean" ? data.openToWhispers : true
           );
+          setHideLocation(
+            typeof data.hideLocation === "boolean" ? data.hideLocation : false
+          );
+          setExistingPhotos(Array.isArray(data.photos) ? data.photos : []);
         } else {
           setIsFirstTime(true);
           const locale = Intl.DateTimeFormat().resolvedOptions().locale;
@@ -209,13 +223,20 @@ function ProfileInner() {
     const all = [...selectedPhotos];
 
     for (const file of incoming) {
+      if (!file.type.startsWith("image/")) {
+        setError("Please upload image files only.");
+        continue;
+      }
       if (file.size > MAX_PHOTO_SIZE_BYTES) {
         setError("Each photo must be 5MB or less.");
         continue;
       }
-      if (all.length < MAX_PHOTOS) {
-        all.push(file);
+      const totalCount = existingPhotos.length + all.length;
+      if (totalCount >= MAX_PHOTOS) {
+        setError(`You can add up to ${MAX_PHOTOS} photos in total.`);
+        break;
       }
+      all.push(file);
     }
 
     setSelectedPhotos(all);
@@ -258,9 +279,6 @@ function ProfileInner() {
     if (!countryCode.trim()) {
       return "Please enter your country code.";
     }
-    if (bio.length > MAX_BIO_LENGTH) {
-      return "Bio must be 150 characters or fewer.";
-    }
     if (interests.length > 0 && (interests.length < 3 || interests.length > 5)) {
       return "If you add interests, please choose between 3 and 5.";
     }
@@ -297,24 +315,28 @@ function ProfileInner() {
       setPendingDraft(draft);
       setShowWhispersPrompt(true);
     } else {
-      await saveProfile(draft, openToWhispers, false);
-      router.replace("/feed");
+      await saveProfile(draft, openToWhispers, hideLocation, true, false);
     }
   };
 
   const saveProfile = async (
     draft: DraftProfile,
     openToWhispersValue: boolean,
-    markCompleted: boolean
+    hideLocationValue: boolean,
+    markCompleted: boolean,
+    redirectToFeed: boolean
   ) => {
     if (!user) return;
     setSaving(true);
+    setError(null);
 
     try {
       const docRef = doc(db, "users", user.uid);
       const snap = await getDoc(docRef);
 
-      const photosToSave: any[] = [];
+      let photosToSave: any[] = Array.isArray(existingPhotos)
+        ? [...existingPhotos]
+        : [];
 
       if (selectedPhotos.length > 0) {
         for (const file of selectedPhotos) {
@@ -329,9 +351,13 @@ function ProfileInner() {
             createdAt: Timestamp.now(),
           });
         }
-        if (photosToSave.length > 0) {
-          photosToSave[0].isPrimary = true;
-        }
+      }
+
+      const hasPrimary = photosToSave.some((p) => p.isPrimary);
+      if (photosToSave.length > 0 && !hasPrimary) {
+        photosToSave = photosToSave.map((p, index) =>
+          index === 0 ? { ...p, isPrimary: true } : p
+        );
       }
 
       const baseData: any = {
@@ -346,15 +372,13 @@ function ProfileInner() {
         interests: draft.interests,
         dealBreakers: draft.dealBreakers,
         openToWhispers: openToWhispersValue,
-        hideLocation: false,
+        hideLocation: hideLocationValue,
         profileCompleted: markCompleted,
         updatedAt: serverTimestamp(),
         lastActiveAt: serverTimestamp(),
       };
 
-      if (photosToSave.length > 0) {
-        baseData.photos = photosToSave;
-      }
+      baseData.photos = photosToSave;
 
       if (snap.exists()) {
         await updateDoc(docRef, baseData);
@@ -363,10 +387,22 @@ function ProfileInner() {
           uid: user.uid,
           displayName: user.displayName ?? "",
           photos: photosToSave,
-          hideLocation: false,
+          hideLocation: hideLocationValue,
           profileCompleted: markCompleted,
           createdAt: serverTimestamp(),
           ...baseData,
+        });
+      }
+
+      setExistingPhotos(photosToSave);
+      setSelectedPhotos([]);
+
+      if (redirectToFeed) {
+        router.replace("/feed");
+      } else {
+        showToast({
+          message: "Profile updated fresh feed incoming!",
+          variant: "success",
         });
       }
     } catch (err) {
@@ -529,25 +565,144 @@ function ProfileInner() {
             <p className="text-xs text-muted-foreground">
               Add up to {MAX_PHOTOS} photos. Max 5MB each.
             </p>
+            {existingPhotos.length > 0 && (
+              <p className="text-xs mt-1">
+                You currently have {existingPhotos.length} photo
+                {existingPhotos.length > 1 ? "s" : ""} on your profile.
+              </p>
+            )}
             {selectedPhotos.length > 0 && (
               <p className="text-xs mt-1">
-                {selectedPhotos.length} photo
-                {selectedPhotos.length > 1 ? "s" : ""} selected.
+                {selectedPhotos.length} new photo
+                {selectedPhotos.length > 1 ? "s" : ""} will be added when you
+                save.
               </p>
             )}
           </div>
+
+          {existingPhotos.length > 0 && (
+            <div className="space-y-2">
+              <Label>Manage current photos</Label>
+              <div className="space-y-2">
+                {existingPhotos.map((photo, index) => (
+                  <div
+                    key={photo.id ?? index}
+                    className="flex items-center justify-between rounded-md border px-3 py-2 text-xs"
+                  >
+                    <div className="space-y-0.5">
+                      <p>
+                        Photo {index + 1}
+                        {photo.isPrimary ? " (Primary)" : ""}
+                      </p>
+                      {photo.storagePath && (
+                        <p className="text-[10px] text-muted-foreground break-all">
+                          {photo.storagePath}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {index > 0 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="text-[10px] px-2 py-1"
+                          onClick={() => {
+                            setExistingPhotos((prev) => {
+                              const copy = [...prev];
+                              const temp = copy[index - 1];
+                              copy[index - 1] = copy[index];
+                              copy[index] = temp;
+                              return copy;
+                            });
+                          }}
+                        >
+                          Up
+                        </Button>
+                      )}
+                      {index < existingPhotos.length - 1 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="text-[10px] px-2 py-1"
+                          onClick={() => {
+                            setExistingPhotos((prev) => {
+                              const copy = [...prev];
+                              const temp = copy[index + 1];
+                              copy[index + 1] = copy[index];
+                              copy[index] = temp;
+                              return copy;
+                            });
+                          }}
+                        >
+                          Down
+                        </Button>
+                      )}
+                      {!photo.isPrimary && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="text-[10px] px-2 py-1"
+                          onClick={() => {
+                            setExistingPhotos((prev) =>
+                              prev.map((p, i) =>
+                                i === index
+                                  ? { ...p, isPrimary: true }
+                                  : { ...p, isPrimary: false }
+                              )
+                            );
+                          }}
+                        >
+                          Make primary
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-[10px] px-2 py-1 text-red-600"
+                        onClick={() => {
+                          setExistingPhotos((prev) =>
+                            prev.filter((_, i) => i !== index)
+                          );
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1">
             <Label>Short bio (0–150 chars)</Label>
             <Textarea
               value={bio}
-              onChange={(e) => setBio(e.target.value.slice(0, MAX_BIO_LENGTH))}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value.length > MAX_BIO_LENGTH) {
+                  setBio(value.slice(0, MAX_BIO_LENGTH));
+                  setBioWarning(
+                    "Bio is limited to 150 characters. We've truncated the extra text."
+                  );
+                } else {
+                  setBio(value);
+                  setBioWarning(null);
+                }
+              }}
               rows={3}
               placeholder="What should people know about you?"
             />
             <p className="text-xs text-muted-foreground">
               {bio.length}/{MAX_BIO_LENGTH} characters
             </p>
+            {bioWarning && (
+              <p className="text-xs text-yellow-700 mt-1">{bioWarning}</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -607,14 +762,21 @@ function ProfileInner() {
         </section>
 
         {!isFirstTime && (
-          <section className="space-y-2">
-            <h2 className="text-lg font-semibold">Whispers</h2>
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Privacy & Whispers</h2>
             <label className="flex items-center gap-2 text-sm">
               <Checkbox
                 checked={openToWhispers}
                 onChange={(e) => setOpenToWhispers(e.target.checked)}
               />
               <span>Open to Whispers</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={hideLocation}
+                onChange={(e) => setHideLocation(e.target.checked)}
+              />
+              <span>Hide my location (show "Nearby" instead of city)</span>
             </label>
           </section>
         )}
@@ -631,6 +793,15 @@ function ProfileInner() {
               ? "Continue"
               : "Save profile"}
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium"
+            onClick={() => setShowPreview(true)}
+          >
+            Preview
+          </Button>
         </div>
         </form>
 
@@ -646,9 +817,8 @@ function ProfileInner() {
                 <Button
                   type="button"
                   onClick={async () => {
-                    await saveProfile(pendingDraft, true, true);
+                    await saveProfile(pendingDraft, true, false, true, true);
                     setShowWhispersPrompt(false);
-                    router.replace("/feed");
                   }}
                   className="px-4 py-2 text-sm font-medium"
                 >
@@ -657,15 +827,71 @@ function ProfileInner() {
                 <Button
                   type="button"
                   onClick={async () => {
-                    await saveProfile(pendingDraft, false, true);
+                    await saveProfile(pendingDraft, false, false, true, true);
                     setShowWhispersPrompt(false);
-                    router.replace("/feed");
                   }}
                   variant="outline"
                   className="px-4 py-2 text-sm font-medium"
                 >
                   Not yet
                 </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showPreview && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60">
+            <div className="w-full max-w-sm rounded-lg bg-white p-6 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-lg font-semibold mb-1">Profile preview</h2>
+                  <p className="text-xs text-muted-foreground">
+                    This is roughly how your card will appear in the feed.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-xs px-2 py-1"
+                  onClick={() => setShowPreview(false)}
+                >
+                  Close
+                </Button>
+              </div>
+
+              <div className="rounded-2xl border bg-card/80 p-4 shadow-sm text-sm space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold">
+                      {user.displayName ?? "You"}
+                      {ageNumber ? `, ${ageNumber}` : ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatLocationForDisplay(city, countryCode, hideLocation)}
+                    </p>
+                  </div>
+                </div>
+
+                {bio && (
+                  <p className="text-xs">
+                    {bio.length > 50 ? `${bio.slice(0, 50)}…` : bio}
+                  </p>
+                )}
+
+                {interests.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    <span className="rounded-full border px-2 py-0.5 text-[11px]">
+                      {interests[0]}
+                    </span>
+                  </div>
+                )}
+
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Photos, blur effects, and whisper actions will be added in the
+                  full feed implementation.
+                </p>
               </div>
             </div>
           </div>

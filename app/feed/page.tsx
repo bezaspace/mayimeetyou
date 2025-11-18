@@ -6,6 +6,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { useAuth } from "@/components/AuthProvider";
 import { db } from "@/lib/firebase";
+import { formatLocationForDisplay } from "@/lib/utils";
 
 export default function FeedPage() {
   return (
@@ -20,6 +21,15 @@ function FeedInner() {
   const router = useRouter();
   const [checkingProfile, setCheckingProfile] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [profileSnippet, setProfileSnippet] = useState<{
+    displayName: string;
+    age: number | null;
+    city: string;
+    countryCode: string;
+    hideLocation: boolean;
+    bio: string;
+    interests: string[];
+  } | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -35,6 +45,17 @@ function FeedInner() {
           router.replace("/profile");
           return;
         }
+
+        setProfileSnippet({
+          displayName: data.displayName ?? "You",
+          age: typeof data.age === "number" ? data.age : null,
+          city: data.location?.city ?? "",
+          countryCode: data.location?.countryCode ?? "",
+          hideLocation:
+            typeof data.hideLocation === "boolean" ? data.hideLocation : false,
+          bio: data.bio ?? "",
+          interests: Array.isArray(data.interests) ? data.interests : [],
+        });
 
         setCheckingProfile(false);
       } catch (err) {
@@ -82,6 +103,43 @@ function FeedInner() {
             and a gentle limit so you focus on quality, not swiping.
           </p>
         </div>
+
+        {profileSnippet && (
+          <div className="rounded-2xl border bg-card/80 p-4 shadow-sm text-sm space-y-2">
+            <p className="text-xs uppercase text-muted-foreground">
+              How others might see you
+            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold">
+                  {profileSnippet.displayName}
+                  {profileSnippet.age ? `, ${profileSnippet.age}` : ""}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatLocationForDisplay(
+                    profileSnippet.city,
+                    profileSnippet.countryCode,
+                    profileSnippet.hideLocation
+                  )}
+                </p>
+              </div>
+            </div>
+            {profileSnippet.bio && (
+              <p className="text-xs">
+                {profileSnippet.bio.length > 50
+                  ? `${profileSnippet.bio.slice(0, 50)}…`
+                  : profileSnippet.bio}
+              </p>
+            )}
+            {profileSnippet.interests.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-1">
+                <span className="rounded-full border px-2 py-0.5 text-[11px]">
+                  {profileSnippet.interests[0]}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
