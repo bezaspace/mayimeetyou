@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   collection,
@@ -31,6 +31,39 @@ interface FeedProfile {
   photoUrl: string | null;
 }
 
+const ORIENTATION_FILTER_OPTIONS = [
+  { value: "", label: "Any orientation" },
+  { value: "straight", label: "Straight" },
+  { value: "gay", label: "Gay" },
+  { value: "bi", label: "Bi" },
+  { value: "pan", label: "Pan" },
+  { value: "ace", label: "Ace" },
+  { value: "other", label: "Other" },
+];
+
+const INTEREST_FILTER_OPTIONS: string[] = [
+  "Books",
+  "Coffee",
+  "Hiking",
+  "Running",
+  "Cooking",
+  "Live music",
+  "Podcasts",
+  "Yoga",
+  "Board games",
+  "Art & museums",
+  "Tech & startups",
+  "Movies",
+  "Photography",
+  "Travel",
+  "Foodie",
+  "Fitness",
+  "Writing",
+  "Gaming",
+  "Dancing",
+  "Outdoors",
+];
+
 export default function FeedPage() {
   return (
     <ProtectedRoute>
@@ -57,6 +90,60 @@ function FeedInner() {
   const [feedLoading, setFeedLoading] = useState(true);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [feedProfiles, setFeedProfiles] = useState<FeedProfile[]>([]);
+  const [noProfilesReason, setNoProfilesReason] = useState<
+    "none" | "filters"
+  >("none");
+  const [orientationFilter, setOrientationFilter] = useState<string>("");
+  const [interestFilter, setInterestFilter] = useState<string[]>([]);
+  const [interestFilterQuery, setInterestFilterQuery] = useState<string>("");
+
+  const filteredInterestOptions = useMemo(() => {
+    const q = interestFilterQuery.trim().toLowerCase();
+    if (!q) return INTEREST_FILTER_OPTIONS;
+    return INTEREST_FILTER_OPTIONS.filter((item) =>
+      item.toLowerCase().includes(q)
+    );
+  }, [interestFilterQuery]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (typeof window === "undefined") return;
+
+    try {
+      const raw = window.localStorage.getItem(
+        `mayimeetyou:feedFilters:${user.uid}`
+      );
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        if (typeof parsed.orientation === "string") {
+          setOrientationFilter(parsed.orientation);
+        }
+        if (Array.isArray(parsed.interests)) {
+          setInterestFilter(parsed.interests);
+        }
+      }
+    } catch (storageError) {
+      console.error(storageError);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    if (typeof window === "undefined") return;
+
+    try {
+      window.localStorage.setItem(
+        `mayimeetyou:feedFilters:${user.uid}`,
+        JSON.stringify({
+          orientation: orientationFilter,
+          interests: interestFilter,
+        })
+      );
+    } catch (storageError) {
+      console.error(storageError);
+    }
+  }, [user, orientationFilter, interestFilter]);
 
   useEffect(() => {
     if (!user) return;
@@ -87,13 +174,40 @@ function FeedInner() {
           const candidateData = docSnap.data() as any;
           candidates.push({ uid: docSnap.id, ...candidateData });
         });
+        let filteredCandidates = [...candidates];
 
-        if (candidates.length === 0) {
+        const hasOrientationFilter = !!orientationFilter;
+        const hasInterestFilter =
+          Array.isArray(interestFilter) && interestFilter.length > 0;
+
+        if (hasOrientationFilter) {
+          filteredCandidates = filteredCandidates.filter((candidate) => {
+            return candidate.orientation === orientationFilter;
+          });
+        }
+
+        if (hasInterestFilter) {
+          filteredCandidates = filteredCandidates.filter((candidate) => {
+            const candidateInterests = Array.isArray(candidate.interests)
+              ? candidate.interests
+              : [];
+            return interestFilter.some((value) =>
+              candidateInterests.includes(value)
+            );
+          });
+        }
+
+        if (filteredCandidates.length === 0) {
           setFeedProfiles([]);
+          if (hasOrientationFilter || hasInterestFilter) {
+            setNoProfilesReason("filters");
+          } else {
+            setNoProfilesReason("none");
+          }
           return;
         }
 
-        const scored = candidates.map((candidate) => {
+        const scored = filteredCandidates.map((candidate) => {
           const candidateInterests = Array.isArray(candidate.interests)
             ? candidate.interests
             : [];
@@ -123,10 +237,8 @@ function FeedInner() {
 
         scored.sort((a, b) => b.score - a.score);
 
-        const top = scored.slice(0, 20).map((item) => item.candidate);
-
         const hydrated: FeedProfile[] = await Promise.all(
-          top.map(async (candidate) => {
+          scored.map((item) => item.candidate).map(async (candidate) => {
             let photoUrl: string | null = null;
             const photosArray = Array.isArray(candidate.photos)
               ? candidate.photos
@@ -215,7 +327,7 @@ function FeedInner() {
     };
 
     checkProfileAndFeed();
-  }, [user, router]);
+  }, [user, router, orientationFilter, interestFilter]);
 
   if (!user || checkingProfile) {
     return (
@@ -247,9 +359,93 @@ function FeedInner() {
         <div className="rounded-2xl border bg-card/80 p-4 shadow-sm text-sm">
           <p className="font-medium mb-1">Today&apos;s suggestions</p>
           <p className="text-xs text-muted-foreground">
-            You&apos;ll see up to around 10–20 profiles per day here. No endless
+            You&apos;ll see a small curated set of profiles here. No endless
             swiping—just a few thoughtful cards to whisper to.
           </p>
+        </div>
+
+        <div className="rounded-2xl border bg-card/80 p-4 shadow-sm space-y-3 text-sm">
+          <div className="flex flex-col gap-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium uppercase text-muted-foreground">
+                Filters
+              </p>
+              <div className="flex flex-col gap-3">
+                <div className="space-y-1">
+                  <p className="text-xs">Orientation</p>
+                  <select
+                    value={orientationFilter}
+                    onChange={(e) => setOrientationFilter(e.target.value)}
+                    className="w-full rounded-md border px-3 py-2 text-xs"
+                  >
+                    {ORIENTATION_FILTER_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs">Interests</p>
+                    <input
+                      type="text"
+                      value={interestFilterQuery}
+                      onChange={(e) => setInterestFilterQuery(e.target.value)}
+                      placeholder="Search interests"
+                      className="w-32 rounded-md border px-2 py-1 text-[11px]"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {filteredInterestOptions.map((item) => {
+                      const selected = interestFilter.includes(item);
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => {
+                            setInterestFilter((prev) => {
+                              if (prev.includes(item)) {
+                                return prev.filter((value) => value !== item);
+                              }
+                              return [...prev, item];
+                            });
+                          }}
+                          className={`px-2 py-0.5 rounded-full border text-[11px] ${
+                            selected
+                              ? "bg-black text-white border-black"
+                              : "bg-background text-foreground"
+                          }`}
+                        >
+                          {item}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {(orientationFilter || interestFilter.length > 0) && (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] text-muted-foreground">
+                  Filters stay on until you clear them.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="px-2 py-0.5 text-[11px]"
+                  onClick={() => {
+                    setOrientationFilter("");
+                    setInterestFilter([]);
+                    setInterestFilterQuery("");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
 
         {feedLoading && (
@@ -266,12 +462,37 @@ function FeedInner() {
         )}
 
         {!feedLoading && !feedError && feedProfiles.length === 0 && (
-          <div className="rounded-2xl border bg-card/80 p-4 shadow-sm text-sm text-muted-foreground">
-            <p className="font-medium mb-1">No matches just yet</p>
-            <p>
-              We don&apos;t have anyone to show you today. Try checking back
-              tomorrow, or refreshing your interests in your profile.
-            </p>
+          <div className="rounded-2xl border bg-card/80 p-4 shadow-sm text-sm space-y-2">
+            {noProfilesReason === "filters" ? (
+              <>
+                <p className="font-medium mb-1">No profiles match these filters</p>
+                <p className="text-sm text-muted-foreground">
+                  Try expanding your orientation or interest filters to see more
+                  people.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 text-xs font-medium"
+                  onClick={() => {
+                    setOrientationFilter("");
+                    setInterestFilter([]);
+                    setInterestFilterQuery("");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="font-medium mb-1">No matches just yet</p>
+                <p className="text-sm text-muted-foreground">
+                  We don&apos;t have anyone to show you right now. Try checking
+                  back tomorrow, or refreshing your interests in your profile.
+                </p>
+              </>
+            )}
           </div>
         )}
 

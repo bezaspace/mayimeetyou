@@ -37,3 +37,9 @@
 - Firestore-backed feed retrieval with basic matching (interests, location, randomness) is implemented.
 - Feed cards show blurred photo teaser, name/age/city, one interest badge, bio preview, and Whisper Hi / Pass actions.
 - Layout is currently a horizontal one-card-at-a-time carousel instead of the original vertical list, but fulfills the feed basics for the MVP.
+
+### Milestone 2.2 – Filters & Daily Reset PARTIALLY COMPLETED
+
+- Filters by orientation and interests are implemented on the feed, with sticky behavior via local storage.
+- "No profiles" empty states are implemented for both general lack of matches and overly tight filters.
+- Daily per-user profile quota and midnight reset are intentionally **not** enforced yet while we are early in the market.
