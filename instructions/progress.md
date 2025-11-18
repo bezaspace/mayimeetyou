@@ -23,3 +23,17 @@
 - **1.2.3 – Post-setup redirect**
 
 **Exit criteria met:** First-time users can create profiles, UX is implemented, and post-setup redirect works.
+
+## Milestone 1.3 – Edit Profile Anytime (Epic 1.3) COMPLETED
+
+**Exit criteria met:** New users can sign up, create a basic profile, and return later to edit it.
+
+---
+
+## Phase 2 – Profile Discovery Feed (Epic 1.2)
+
+### Milestone 2.1 – Feed Basics COMPLETED
+
+- Firestore-backed feed retrieval with basic matching (interests, location, randomness) is implemented.
+- Feed cards show blurred photo teaser, name/age/city, one interest badge, bio preview, and Whisper Hi / Pass actions.
+- Layout is currently a horizontal one-card-at-a-time carousel instead of the original vertical list, but fulfills the feed basics for the MVP.
